@@ -8,6 +8,7 @@ import traceback
 CONF                  = None
 PREFIX_GROUPS_BY_HOST = {}
 PREFIX_GROUPS_BY_NAME = {}
+HOSTS_BY_PREFIX_GROUP = {}
 ENDPOINT_LOOKUP       = {}    # Find prefix-groups by allocated IP address
 
 
@@ -208,6 +209,13 @@ def traverse_prefix_groups(net_name,
                 PREFIX_GROUPS_BY_NAME[net_name][pg.name] = pg
 
 
+def _get_net_info(net_name):
+    for net_info in CONF['networks']:
+        if net_info['name'] == net_name:
+            return net_info
+    raise MyException("@@@ ERROR! Did not find network '%s'." % net_name)
+
+
 def create_prefix_groups_from_topology():
     """
     Creates information about prefix groups from the supplied topology info.
@@ -215,24 +223,30 @@ def create_prefix_groups_from_topology():
     """
     global PREFIX_GROUPS_LIST
 
-    for net_info in CONF['networks']:
-        net_name = net_info['name']
-        net_cidr = net_info['cidr']
-        net_len  = int(net_cidr.split("/")[1])
-        PREFIX_GROUPS_BY_HOST[net_name] = {}
-        PREFIX_GROUPS_BY_NAME[net_name] = {}
-        traverse_prefix_groups(net_name, net_cidr, CONF['topology'],
-                               net_name, None, net_len, 0)
+    # Multiple topologies can be specified. A "topology" consists of a
+    # topology-map of hosts, as well as a list of one or more 'networks' which
+    # connect those hosts.
+    for topology in CONF['topologies']:
+        networks = topology['networks']
+        topo_map = topology['map']
+        for net_name in networks:
+            net_info = _get_net_info(net_name)
+            net_cidr = net_info['cidr']
+            net_len  = int(net_cidr.split("/")[1])
+            PREFIX_GROUPS_BY_HOST[net_name] = {}
+            PREFIX_GROUPS_BY_NAME[net_name] = {}
+            traverse_prefix_groups(net_name, net_cidr, topo_map,
+                                   net_name, None, net_len, 0)
 
-        # PREFIX_GROUPS_BY_HOST[net_name] will now have been filled in
-        group_names = sorted(set(
+            # PREFIX_GROUPS_BY_HOST[net_name] will now have been filled in
+            group_names = sorted(set(
                [ gn.name for gn in PREFIX_GROUPS_BY_HOST[net_name].values() ]))
-        for gn in group_names:
-            buf = "Group '%s': " % gn
-            for host, group in PREFIX_GROUPS_BY_HOST[net_name].items():
-                if group.name == gn:
-                    buf += "%s " % host
-            print(buf)
+            for gn in group_names:
+                buf = "Group '%s': " % gn
+                for host, group in PREFIX_GROUPS_BY_HOST[net_name].items():
+                    if group.name == gn:
+                        buf += "%s " % host
+                print(buf)
     return
 
 
@@ -253,7 +267,8 @@ def _get_prefix_group(net_name, host_ip, prefix=None):
         raise MyException("@@@ ERROR! Unknown network name '%s'." % net_name)
 
     if not host_ip or host_ip not in PREFIX_GROUPS_BY_HOST[net_name]:
-        raise MyException("@@@ ERROR! Unknown host '%s'." % host_ip)
+        raise MyException("@@@ ERROR! Unknown host '%s' in network '%s'." %
+                          (host_ip, net_name))
 
     pg = PREFIX_GROUPS_BY_HOST[net_name][host_ip]
 
@@ -285,7 +300,12 @@ def list_ips(net_name):
         print(e)
 
 
-def show_networks(summary=False):
+def show_networks(selected_net_name=None, summary=False, show_hosts=False):
+    if selected_net_name:
+        # Don't need the net info here, just want to check that the network
+        # exists.
+        _get_net_info(selected_net_name)
+
     fstring = "%-15s   %-20s   %-16s   %-16s   %-10s   %-10s"
     headline = fstring % ("Name", "CIDR", "Smallest IP", "Largest IP",
                           "Allocated", "Free")
@@ -294,6 +314,9 @@ def show_networks(summary=False):
 
     for net in CONF['networks']:
         net_name = net['name']
+        if net_name not in PREFIX_GROUPS_BY_NAME or \
+                selected_net_name and net_name != selected_net_name:
+            continue
         pgnames = sorted([ name for name
                            in PREFIX_GROUPS_BY_NAME[net_name].keys() ])
         if summary:
@@ -335,9 +358,10 @@ def show_hosts(summary=False):
     all_hosts = set()
     for net in CONF['networks']:
         net_name = net['name']
-        fstring += "%-20s    "
-        fill_args.append(net_name)
-        all_hosts.update(PREFIX_GROUPS_BY_HOST[net_name].keys())
+        if net_name in PREFIX_GROUPS_BY_HOST:
+            fstring += "%-20s    "
+            fill_args.append(net_name)
+            all_hosts.update(PREFIX_GROUPS_BY_HOST[net_name].keys())
     sorted_hosts = sorted(all_hosts)
 
     buf = fstring % tuple(fill_args)
@@ -348,11 +372,12 @@ def show_hosts(summary=False):
         fill_args = [ host ]
         for net in CONF['networks']:
             net_name = net['name']
-            pg = PREFIX_GROUPS_BY_HOST[net_name].get(host)
-            if pg:
-                fill_args.append(pg.cidr)
-            else:
-                fill_args.append("---")
+            if net_name in PREFIX_GROUPS_BY_HOST:
+                pg = PREFIX_GROUPS_BY_HOST[net_name].get(host)
+                if pg:
+                    fill_args.append(pg.cidr)
+                else:
+                    fill_args.append("---")
         print(fstring % tuple(fill_args))
 
 
@@ -366,7 +391,7 @@ def cli():
         - add <net-name> <host-ip>
         - del <endpoint-ip>
         - list <net-name>
-        - nets
+        - nets [<net-name]  (use nets+ and nets++ for more details)
         - hosts
         - quit
         - help
@@ -393,6 +418,8 @@ def cli():
                 show_networks(*elems[1:], summary=True)
             elif cmd == "nets+":
                 show_networks(*elems[1:], summary=False)
+            elif cmd == "nets++":
+                show_networks(*elems[1:], summary=False, show_hosts=True)
             elif cmd == "hosts":
                 show_hosts(*elems[1:], summary=True)
             elif cmd == "hosts+":
