@@ -192,16 +192,21 @@ def traverse_prefix_groups(net_name,
     # ... now we can go and examine each of those groups
     new_group_prefix_start_bit = start_bit + num_prefix_bits
     new_group_prefix_value     = 0
-    for g in groups:
-        if type(g) is list:
-            traverse_prefix_groups(net_name, pcidr, g, pname,
+    for group_or_host in groups:
+        if type(group_or_host) is list:
+            traverse_prefix_groups(net_name, pcidr, group_or_host, pname,
                                    new_group_prefix_value,
                                    new_group_prefix_start_bit,
                                    new_prefix_bits)
             new_group_prefix_value += 1
         else:
             # Create lookup to find a host's group
-            PREFIX_GROUPS_BY_HOST[net_name][g] = pg
+            PREFIX_GROUPS_BY_HOST[net_name][group_or_host] = pg
+            # Create lookup to find all the hosts in a prefix group
+            if not pg.cidr in HOSTS_BY_PREFIX_GROUP:
+                HOSTS_BY_PREFIX_GROUP[pg.cidr] = [ group_or_host ]
+            else:
+                HOSTS_BY_PREFIX_GROUP[pg.cidr].append(group_or_host)
             # Create lookup to find a prefix-group by name. We do this here,
             # since we only want to create entries for groups that have hosts
             # associated with them.
@@ -307,8 +312,12 @@ def show_networks(selected_net_name=None, summary=False, show_hosts=False):
         _get_net_info(selected_net_name)
 
     fstring = "%-15s   %-20s   %-16s   %-16s   %-10s   %-10s"
-    headline = fstring % ("Name", "CIDR", "Smallest IP", "Largest IP",
-                          "Allocated", "Free")
+    fill_args = [ "Name", "CIDR", "Smallest IP", "Largest IP",
+                  "Allocated", "Free" ]
+    if show_hosts:
+        fstring += " %-20s"
+        fill_args.append("Hosts")
+    headline = fstring % tuple(fill_args)
     print(headline)
     print("-"*len(headline))
 
@@ -334,9 +343,13 @@ def show_networks(selected_net_name=None, summary=False, show_hosts=False):
                 free      += pg.num_free
                 allocated += len(pg.endpoints)
             else:
-                print(fstring % (
-                      pg.name, pg.cidr, pg.smallest_ip, pg.largest_ip,
-                      len(pg.endpoints), pg.num_free))
+                fill_args = [ pg.name, pg.cidr, pg.smallest_ip, pg.largest_ip,
+                              len(pg.endpoints), pg.num_free ]
+                if show_hosts:
+                    host_list = HOSTS_BY_PREFIX_GROUP.get(pg.cidr, "---")
+                    fill_args.append(host_list)
+                print(fstring % tuple(fill_args))
+
 
         if summary:
             print(fstring % (
