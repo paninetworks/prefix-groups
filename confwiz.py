@@ -184,6 +184,12 @@ def traverse_prefix_groups(net_name,
         # Special case: If there is just a single group filling this entire
         # group here then we don't need any bits at this level either.
         new_prefix_bits = 0
+    elif num_lists_in_list < len(groups):
+        # Special case: Hosts and groups share the same level. This is not
+        # allowed! If you want hosts here, just put them in their own
+        # one-element groups.
+        raise MyException(
+                "@@@ ERROR! Cannot have hosts and groups at the same level!")
     else:
         # Normal case: How many bits are needed to encode the various group
         # prefixes.
@@ -207,12 +213,42 @@ def traverse_prefix_groups(net_name,
                 HOSTS_BY_PREFIX_GROUP[pg.cidr] = [ group_or_host ]
             else:
                 HOSTS_BY_PREFIX_GROUP[pg.cidr].append(group_or_host)
+            """
             # Create lookup to find a prefix-group by name. We do this here,
             # since we only want to create entries for groups that have hosts
             # associated with them.
             if pg.name not in PREFIX_GROUPS_BY_NAME:
                 PREFIX_GROUPS_BY_NAME[net_name][pg.name] = pg
+            """
+    if num_lists_in_list > 0:
+        # We are in a group that defines sub-groups. If we didn't fill the
+        # entire address space of the groups with the sub groups then we will
+        # implicitly discover those cases and create empty groups to fill the
+        # address space. Example: A group has 3 sub groups explicitly defined.
+        # Obviously, we will have to have 2 bits to encode 3, but we actually
+        # can encode 4 groups. User didn't define a 4th group, so we create a
+        # fourth, empty group and add it. That way, if the list of networks is
+        # shown, the user can see those empty groups. They can see where there
+        # is "still space" in the prefix groups.
+        while new_group_prefix_value <= (2**new_prefix_bits)-1:
+            traverse_prefix_groups(net_name, pcidr, [], pname,
+                                   new_group_prefix_value,
+                                   new_group_prefix_start_bit,
+                                   new_prefix_bits)
+            new_group_prefix_value += 1
 
+    # Create the reference to the new group, but only if it's a pure prefix
+    # group ("only has hosts", since those don't introduce any new prefix
+    # bits). By only creating references to those, the other intermittent
+    # groups we have created will disappear, since they don't have a reference
+    # any more. This is ok, we don't need them, since no IP is ever assigned to
+    # those.
+    # Note that empty groups (either explicitly specified in the config, or
+    # automatically discovered) will be referenced here, since empty groups
+    # also don't introduce a new prefix level.
+    if pg and pg.name not in PREFIX_GROUPS_BY_NAME and \
+                new_prefix_bits == 0:
+        PREFIX_GROUPS_BY_NAME[net_name][pg.name] = pg
 
 def _get_net_info(net_name):
     for net_info in CONF['networks']:
