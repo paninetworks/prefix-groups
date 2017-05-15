@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import json
 import struct
 import socket
@@ -341,15 +342,21 @@ def list_ips(net_name):
         print(e)
 
 
-def show_networks(selected_net_name=None, summary=False, show_hosts=False):
+def show_networks(selected_net_name=None, summary=False, show_hosts=False,
+                  compact=False):
     if selected_net_name:
         # Don't need the net info here, just want to check that the network
         # exists.
         _get_net_info(selected_net_name)
 
-    fstring = "%-15s   %-20s   %-16s   %-16s   %-10s   %-10s"
-    fill_args = [ "Name", "CIDR", "Smallest IP", "Largest IP",
-                  "Allocated", "Free" ]
+    if compact:
+        fstring = "%-13s%-20s%-16s%-16s"
+        fill_args = [ "Name", "CIDR", "Smallest IP", "Largest IP" ]
+    else:
+        fstring = "%-18s%-23s%-19s%-19s%-13s%-13s"
+        fill_args = [ "Name", "CIDR", "Smallest IP", "Largest IP",
+                      "Allocated", "Free" ]
+
     if show_hosts:
         fstring += " %-20s"
         fill_args.append("Hosts")
@@ -379,8 +386,11 @@ def show_networks(selected_net_name=None, summary=False, show_hosts=False):
                 free      += pg.num_free
                 allocated += len(pg.endpoints)
             else:
-                fill_args = [ pg.name, pg.cidr, pg.smallest_ip, pg.largest_ip,
-                              len(pg.endpoints), pg.num_free ]
+                fill_args = [ pg.name, pg.cidr, pg.smallest_ip, pg.largest_ip ]
+                if not compact:
+                    fill_args.append(len(pg.endpoints))
+                    fill_args.append(pg.num_free)
+
                 if show_hosts:
                     host_list = HOSTS_BY_PREFIX_GROUP.get(pg.cidr, "---")
                     fill_args.append(host_list)
@@ -388,9 +398,11 @@ def show_networks(selected_net_name=None, summary=False, show_hosts=False):
 
 
         if summary:
-            print(fstring % (
-                  net_name, net['cidr'], int2ip(smallest_ip),
-                  int2ip(largest_ip), allocated, free))
+            fill_args = [ net_name, net['cidr'], int2ip(smallest_ip) ]
+            if not compact:
+                fill_args.append(allocated)
+                fill_args.append(free)
+            print(fstring % tuple(fill_args))
     return
 
 
@@ -469,6 +481,9 @@ def cli():
                 show_networks(*elems[1:], summary=False)
             elif cmd == "nets++":
                 show_networks(*elems[1:], summary=False, show_hosts=True)
+            elif cmd == "nets++-":
+                show_networks(*elems[1:], summary=False, show_hosts=True,
+                                          compact=True)
             elif cmd == "hosts":
                 show_hosts(*elems[1:], summary=True)
             elif cmd == "hosts+":
@@ -486,7 +501,12 @@ def cli():
 
 
 if __name__ == "__main__":
-    read_config("confwiz.conf")
+    if len(sys.argv) > 1:
+        cfile = sys.argv[1]
+    else:
+        cfile = "confwiz.conf"
+
+    read_config(cfile)
     create_prefix_groups_from_topology()
     cli()
 
